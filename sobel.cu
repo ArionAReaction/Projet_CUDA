@@ -4,30 +4,27 @@
 using namespace std;
 using namespace cv;
 
-__global__ void grayscale(unsigned char* mA_inter,unsigned char* rgb){
-	int x_current = blockDim.x * blockIdx.x + threadIdx.x;
-	mA_inter[x_current] = (307*rgb[3*x_current]+604*rgb[3*x_current+1]+113*rgb[3*x_current+2])/1024;
+__global__ void grayscale(unsigned char* mA_inter,unsigned char* rgb,int width){
+	auto i = blockIdx.y * blockDim.y + threadIdx.y;
+	auto j = blockIdx.x * blockDim.x + threadIdx.x;
+	mA_inter[i*width+j] = (307*rgb[3*(i*width+j)]+604*rgb[3*(i*width+j)+1]+113*rgb[3*(i*width+j)+2])/1024;
 }
 
 __global__ void sobel(unsigned char* mA_d,unsigned char* mA_inter,int width,int height){
-	int x_current = blockDim.x * blockIdx.x + threadIdx.x;
-	if (
-		x_current>=width &&
-		x_current<=(height-1)*width &&
-		x_current%width!=0 &&
-		x_current%width!=(width-1)
-	){
-		float h = mA_inter[x_current-1-width] - mA_inter[x_current+1-width]
-				+ 2*mA_inter[x_current-1] - 2*mA_inter[x_current+1]
-				+ mA_inter[x_current-1+width] - mA_inter[x_current+1+width];
-		float v = mA_inter[x_current-1-width] - mA_inter[x_current-1+width]
-				+ 2*mA_inter[x_current-width] - 2*mA_inter[x_current+width]
-				+ mA_inter[x_current+1-width] - mA_inter[x_current+1+width];
+	auto i = blockIdx.y * blockDim.y + threadIdx.y;
+	auto j = blockIdx.x * blockDim.x + threadIdx.x;
+	if (i > 0 && i < height && j % width != 0 && j % width != width-1){
+		float h = mA_inter[(i-1)*width+(j-1)] - mA_inter[(i-1)*width+(j+1)]
+				+ 2*mA_inter[i*width+(j-1)] - 2*mA_inter[i*width+(j+1)]
+				+ mA_inter[(i+1)*width+(j-1)] - mA_inter[(i+1)*width+(j+1)];
+		float v = mA_inter[(i-1)*width+(j-1)] - mA_inter[(i+1)*width+(j-1)]
+				+ 2*mA_inter[(i-1)*width+j] - 2*mA_inter[(i+1)*width+j]
+				+ mA_inter[(i-1)*width+(j+1)] - mA_inter[(i+1)*width+(j+1)];
 		h = h > 255 ? 255 : h;
 		v = v > 255 ? 255 : v;
 		float res = h*h + v*v;
 		res = res > 255*255 ? 255*255 : res;
-		mA_d[x_current] = sqrt(res);
+		mA_d[i*width+j] = sqrt(res);
 	}
 }
 
@@ -85,7 +82,7 @@ int main(int argc, char *argv[]){
 	if (cudaErrorIdentifier != cudaSuccess)
 		cout<<"Erreur à l'envoi des données à mA_rgb"<<endl;
 	
-	int grid = 1;
+	/*int grid = 1;
 	int block = m_in.rows * m_in.cols;
 	while (block > prop.maxThreadsPerBlock){
 		block -= prop.maxThreadsPerBlock;
@@ -93,8 +90,11 @@ int main(int argc, char *argv[]){
 	}
 	if (grid > 1){
 		block = prop.maxThreadsPerBlock;
-	}
-	grayscale<<<grid,block>>>(mA_inter,mA_rgb);
+	}*/
+	dim3 block(sqrt(prop.maxThreadsPerBlock), sqrt(prop.maxThreadsPerBlock));
+	dim3 grid((m_in.cols + block.x - 1) / block.x, (m_in.rows + block.y - 1) / block.y);
+	grayscale<<<grid,block>>>(mA_inter,mA_rgb,m_in.cols);
+	
 	cudaErrorIdentifier = cudaGetLastError();
 	if (cudaErrorIdentifier != cudaSuccess){
 		cout<<"Erreur à l'exécution de la fonction grayscale"<<endl;
@@ -148,7 +148,6 @@ int main(int argc, char *argv[]){
 	cudaFree(mA_rgb);
 	return 0;
 }
-
 
 
 
